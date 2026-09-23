@@ -77,6 +77,7 @@ export function OrdersPanel({ orders, onOpen }) {
 
 export function OrderDetail({ order, onClose, onStatus }) {
   const [busy, setBusy] = useState(false);
+  useEffect(() => { const k = e => e.key === "Escape" && onClose(); window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
   const change = async e => { setBusy(true); try { await onStatus(order.id, e.target.value); } catch (err) { alert(err.message); } finally { setBusy(false); } };
   return <div className="modal-backdrop" onClick={onClose}><div className="modal order-modal" onClick={e => e.stopPropagation()} data-testid="order-detail-modal">
     <div className="modal-head"><div><p className="chapter">Order details</p><h2>Order <em>#{order.order_number}</em></h2></div><button className="icon-btn" onClick={onClose} aria-label="Close" data-testid="order-detail-close"><X /></button></div>

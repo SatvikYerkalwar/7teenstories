@@ -50,6 +50,7 @@ function CartDrawer() {
   const cart = useCart();
   const navigate = useNavigate();
   useEffect(() => { document.body.style.overflow = cart.open ? "hidden" : ""; return () => { document.body.style.overflow = ""; }; }, [cart.open]);
+  useEffect(() => { if (!cart.open) return; const k = e => e.key === "Escape" && cart.setOpen(false); window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [cart]);
   if (!cart.open) return null;
   return <div className="drawer-backdrop" onClick={() => cart.setOpen(false)} data-testid="cart-drawer-backdrop">
     <aside className="cart-drawer" onClick={e => e.stopPropagation()} data-testid="cart-drawer">

@@ -23,6 +23,20 @@ A storybook-inspired premium café website with a secure owner admin panel to ma
 - Delete-guard: cannot delete a category with products.
 - Homepage "Stories We Serve" featured products section (auto-renders 3-5 featured items).
 
+## Implemented (2026-06) — Online Ordering
+- Menu cards: qty stepper + "Add to Cart"; unavailable products shown with "Unavailable" tag (public `/api/products` now returns all products with `available` flag).
+- Cart: navbar cart button (desktop + mobile), slide-in drawer, localStorage persistence, qty edit/remove, subtotal/total, Proceed to Checkout.
+- `/checkout`: name, 10-digit phone, Dine-in (table number) / Takeaway, order summary, Pay at Café. Backend recomputes totals from DB prices, merges duplicate items.
+- `/order/:number/confirmed` confirmation page ("Your Story Has Begun ✨") and `/order/:number` tracking page (polls every 5s; Received→Accepted→Preparing→Ready→Completed; cancelled state).
+- Admin: new **Dashboard** tab (order stats, live order cards, new-order alert banners w/ chime + browser Notification) and **Orders** tab (search, status filters, table, detail modal with status change). Sidebar badge shows count of new orders. Polling every 5s.
+- DB: `orders` (id, order_number ST-####, customer_name, customer_phone, order_type, table_number, subtotal, total, status, payment_method=pay_at_cafe, payment_status=pending, created_at, updated_at), `order_items` (id, order_id, product_id, product_name_snapshot, price_snapshot, product_image_snapshot, quantity, subtotal), `counters` (sequential order numbers from 1001).
+- Fix: uploaded images now served at `/api/uploads/...` (ingress only proxies `/api`); frontend rewrites legacy `/uploads/` paths.
+- Frontend code for ordering lives in `/app/frontend/src/ordering/` (Cart.js, Checkout.js, OrderPages.js, AdminOrders.js, PageShell.js, shared.js, ordering.css).
+
+## Ordering API
+- `POST /api/orders` (public), `GET /api/orders/{order_number}` (public, masked phone)
+- `GET /api/admin/orders?status=`, `GET /api/admin/orders/{id}`, `PATCH /api/admin/orders/{id}/status`
+
 ## API endpoints
 - `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout`
 - `GET /api/categories`, `GET /api/products` (public, only available)
@@ -31,7 +45,9 @@ A storybook-inspired premium café website with a secure owner admin panel to ma
 - `POST /api/admin/upload`
 
 ## Backlog
-- **P1** — Analytics widget (top-viewed products) in admin.
+- **P1** — Online payment (schema ready: `payment_method`/`payment_status` on orders).
+- **P1** — Admin "Accepting orders" on/off switch (Settings tab).
+- **P2** — Analytics widget (top-selling products) in admin.
 - **P2** — Bulk product import via CSV.
 - **P2** — Public menu section anchors matching category order.
 - **P2** — Instagram feed live embed once handle is provided.

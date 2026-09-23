@@ -36,7 +36,7 @@ export default function Checkout() {
           <button type="button" className={form.order_type === "dine_in" ? "active" : ""} onClick={() => setForm({ ...form, order_type: "dine_in" })} data-testid="order-type-dine-in">Dine-in</button>
           <button type="button" className={form.order_type === "takeaway" ? "active" : ""} onClick={() => setForm({ ...form, order_type: "takeaway", table_number: "" })} data-testid="order-type-takeaway">Takeaway</button>
         </div>
-        {form.order_type === "dine_in" && <label>Table number<input name="table_number" value={form.table_number} onChange={change} required maxLength={10} placeholder="e.g. 4" data-testid="checkout-table-input" /></label>}
+        {form.order_type === "dine_in" && <label>Table number<input name="table_number" value={form.table_number} onChange={change} maxLength={10} placeholder="e.g. 4" data-testid="checkout-table-input" /></label>}
         <div className="pay-note"><small>PAYMENT</small><strong>Pay at Café</strong><p>Settle the bill at the counter when you collect or finish your order.</p></div>
       </section>
       <section className="paper-card summary-card" data-testid="order-summary">

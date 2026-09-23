@@ -1,0 +1,36 @@
+{
+  "summary": "Full E2E testing of the new online ordering feature (backend + frontend). 17/17 new backend tests pass in /app/backend/tests/test_ordering.py covering: products include unavailable flag, POST /api/orders with server-side price recomputation, duplicate item merging, all validation errors (dine_in missing table -> 400, unavailable product -> 400 with name, unknown product -> 400, invalid phone -> 422, empty items -> 422, quantity>20 -> 422), GET /api/orders/{number} public with masked phone and case-insensitive lookup, admin auth guards, admin list newest-first with full phone and status filter, PATCH status validation, snapshot integrity after product edit+delete, /api/uploads static serving, sequential order numbers. Frontend flows verified via Playwright at desktop 1920x1080: home menu shows qty steppers + add-to-cart + Cheese Nachos Unavailable tag, cart persists across reload (localStorage), cart drawer opens with subtotal/total/plus/minus/remove, checkout form has digits-only phone enforcement, dine_in shows table input while takeaway hides it, order placement navigates to /order/ST-xxxx/confirmed with correct order number, cart cleared after, tracking timeline+status pill work and update within ~6s of admin PATCH via polling, unknown order shows order-error. Admin login works, Dashboard default tab shows stat-orders-today/active/new/revenue plus live orders cards, Orders tab shows orders-new-badge with count, order-row-* rows, filter chips, search input, detail modal exposes detail-customer/phone/type/total, status-btn-* and order-status-select. Placing an order via API while dashboard is open produces new-order-alerts banner within ~7s with alert-view- button that opens detail modal (alert auto-dismisses when opening detail as per code). Mobile 390x844: mobile nav-cart button works, no horizontal overflow (scrollWidth==clientWidth==390).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CartDrawer (mobile)", "issue": "On 390x844 the drawer overlay appears semi-transparent/missing solid background — hero content bleeds through drawer, hurting readability of cart lines and Proceed to Checkout button", "selector": "[data-testid=cart-drawer]", "priority": "MEDIUM"},
+      {"component": "OrderDetail modal", "issue": "Escape key does not close the modal (modal-backdrop keeps intercepting pointer events). Only the X close button works. Minor UX nit.", "selector": "[data-testid=order-detail-modal]", "priority": "LOW"},
+      {"component": "Checkout dine-in validation", "issue": "The checkout-error data-testid element is never rendered because the table_number <input required> triggers native HTML5 constraint validation before the JS setError('Please enter your table number') runs. Backend rule still enforced. Consider removing required or handling submit manually.", "selector": "[data-testid=checkout-error]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Mobile cart drawer", "issues": ["Semi-transparent background: cart content overlaps with page hero, hurting contrast and legibility."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_ordering.py", "/app/test_reports/pytest/ordering_results.xml"],
+  "action_items": [
+    "Fix mobile CartDrawer: give the drawer an opaque background-color (or ensure the backdrop overlay is above the page and drawer sits above the backdrop) so hero content does not bleed through on <=800px viewports.",
+    "Optional: close OrderDetail modal on Escape key press for accessibility.",
+    "Optional: remove `required` from checkout table input (or convert form onSubmit to fully JS-controlled) so the checkout-error message is actually rendered on dine-in without table, matching the intended UX and the tests."
+  ],
+  "critical_code_review_comments": [
+    "server.py places all endpoints, models, seed logic, and CORS in a single 264-line file — as feature-count grows this will get hard to maintain. Recommend splitting orders, products, categories, auth into routers/modules.",
+    "App.js is minified into one enormous line (26 columns wide) — extremely painful to review or grep. Extract admin Dashboard, CategoryManager, ProductModal, Login into dedicated files.",
+    "place_order writes items sequentially with insert_one in a loop; use insert_many for order_items to reduce DB round-trips.",
+    "OrderDetail modal-backdrop does not close on Escape and (per screenshot) intercepts clicks on the sidebar tabs even when logically dismissable — bind Escape and click-on-backdrop to close.",
+    "CartDrawer mobile background transparency (see UI bug above)."
+  ],
+  "updated_files": ["/app/backend/tests/test_ordering.py"],
+  "success_rate": {"backend": "100% (17/17 new + 8/8 existing)", "frontend": "~92% (all functional flows pass; 3 minor UX issues noted)"},
+  "test_credentials": "tanujhaldar44@gmail.com / 7teen@2026 (verified via cookie login)",
+  "seed_data_creation": "Multiple TEST_ orders created via API (ST-1002..ST-1011) as part of order flow and validation tests. TEST_Snap category+product created and cleaned up in snapshot test. Existing seed products (Chocolate Thickshake, French Fries, Dark chocolate brownie, Cheese Nachos-unavailable) unchanged. Order counter now at ST-1011.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "New backend tests live at /app/backend/tests/test_ordering.py — run with `python -m pytest backend/tests/test_ordering.py -v`. Public URL from frontend/.env, cookies HttpOnly+SameSite=None. Notes: (1) place_order merges duplicate product_ids and recomputes total from DB prices — do NOT trust client price. (2) Order numbers sequential from ST-1001. (3) /api/uploads mount serves image bytes; images relative /uploads/... in product docs — frontend rewrites to /api/uploads. (4) Admin dashboard `openOrder` handler auto-dismisses alert when View is clicked (by design). (5) Polling every 5s in useOrdersFeed and tracking page — allow ~6-7s waits. (6) Mobile drawer background transparency reproduces at 390x844.",
+  "rca of the issue": "Mobile cart drawer transparency: CSS for .cart-drawer likely lacks an explicit background-color at mobile breakpoints or the backdrop `.cart-backdrop` has insufficient opacity/z-index. Repro: viewport 390x844, add item, tap Cart in mobile navbar, observe hero text bleeding through drawer. Mitigation: set `background: var(--cream)` on .cart-drawer and ensure backdrop `background: rgba(0,0,0,.4); z-index` sits below drawer."
+}
