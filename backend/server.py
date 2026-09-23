@@ -49,6 +49,26 @@ class ProductIn(BaseModel):
     name: str = Field(min_length=1, max_length=100); description: str = ""
     category_id: str; price: float = Field(gt=0); image_url: str = ""
     available: bool = True; featured: bool = False
+ORDER_STATUSES = ["new", "accepted", "preparing", "ready", "completed", "cancelled"]
+class OrderItemIn(BaseModel): product_id: str; quantity: int = Field(ge=1, le=20)
+class OrderIn(BaseModel):
+    customer_name: str = Field(min_length=1, max_length=60)
+    customer_phone: str = Field(pattern=r"^[0-9]{10,15}$")
+    order_type: str = Field(pattern=r"^(dine_in|takeaway)$")
+    table_number: Optional[str] = Field(default=None, max_length=10)
+    items: list[OrderItemIn] = Field(min_length=1, max_length=50)
+class StatusIn(BaseModel): status: str
+
+async def order_with_items(order):
+    items = await db.order_items.find({"order_id": order["id"]}, {"_id": 0}).to_list(100)
+    return order | {"items": items}
+async def attach_items(orders):
+    ids = [o["id"] for o in orders]
+    items = await db.order_items.find({"order_id": {"$in": ids}}, {"_id": 0}).to_list(5000)
+    by_order = {}
+    for it in items: by_order.setdefault(it["order_id"], []).append(it)
+    return [o | {"items": by_order.get(o["id"], [])} for o in orders]
+def mask_phone(phone): return "X" * max(len(phone) - 4, 0) + phone[-4:]
 
 @api.get("/health")
 async def health(): return {"ok": True}
@@ -83,7 +103,54 @@ async def me(user: dict = Depends(current_admin)): return {"id": user["id"], "em
 async def public_categories(): return await db.categories.find({}, {"_id": 0}).sort("position", 1).to_list(100)
 
 @api.get("/products")
-async def public_products(): return await db.products.find({"available": True}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def public_products(): return await db.products.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+@api.post("/orders")
+async def place_order(data: OrderIn):
+    if data.order_type == "dine_in" and not (data.table_number or "").strip(): raise HTTPException(400, "Please enter your table number")
+    merged = {}
+    for it in data.items: merged[it.product_id] = merged.get(it.product_id, 0) + it.quantity
+    products = {p["id"]: p for p in await db.products.find({"id": {"$in": list(merged)}}, {"_id": 0}).to_list(100)}
+    items, subtotal = [], 0.0
+    for pid, qty in merged.items():
+        p = products.get(pid)
+        if not p: raise HTTPException(400, "One of the items is no longer on the menu")
+        if not p.get("available", True): raise HTTPException(400, f"{p['name']} is currently unavailable")
+        line = round(float(p["price"]) * qty, 2); subtotal += line
+        items.append({"id": str(uuid.uuid4()), "product_id": pid, "product_name_snapshot": p["name"], "price_snapshot": float(p["price"]), "product_image_snapshot": p.get("image_url", ""), "quantity": qty, "subtotal": line})
+    counter = await db.counters.find_one_and_update({"_id": "order_number"}, {"$inc": {"seq": 1}}, upsert=True, return_document=True)
+    order = {"id": str(uuid.uuid4()), "order_number": f"ST-{counter['seq']}", "customer_name": data.customer_name.strip(), "customer_phone": data.customer_phone,
+             "order_type": data.order_type, "table_number": data.table_number.strip() if data.order_type == "dine_in" else None,
+             "subtotal": round(subtotal, 2), "total": round(subtotal, 2), "status": "new", "payment_method": "pay_at_cafe", "payment_status": "pending", "created_at": now(), "updated_at": now()}
+    await db.orders.insert_one(dict(order))
+    for it in items: await db.order_items.insert_one(dict(it) | {"order_id": order["id"]})
+    return order | {"items": [it | {"order_id": order["id"]} for it in items]}
+
+@api.get("/orders/{order_number}")
+async def track_order(order_number: str):
+    order = await db.orders.find_one({"order_number": order_number.upper()}, {"_id": 0})
+    if not order: raise HTTPException(404, "We couldn't find that order")
+    full = await order_with_items(order)
+    return full | {"customer_phone": mask_phone(full["customer_phone"])}
+
+@api.get("/admin/orders")
+async def admin_orders(status: Optional[str] = None, limit: int = 300, _: dict = Depends(current_admin)):
+    query = {"status": status} if status else {}
+    orders = await db.orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(min(limit, 1000))
+    return await attach_items(orders)
+
+@api.get("/admin/orders/{order_id}")
+async def admin_order(order_id: str, _: dict = Depends(current_admin)):
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order: raise HTTPException(404, "Order not found")
+    return await order_with_items(order)
+
+@api.patch("/admin/orders/{order_id}/status")
+async def update_order_status(order_id: str, data: StatusIn, _: dict = Depends(current_admin)):
+    if data.status not in ORDER_STATUSES: raise HTTPException(400, "Unknown status")
+    result = await db.orders.update_one({"id": order_id}, {"$set": {"status": data.status, "updated_at": now()}})
+    if not result.matched_count: raise HTTPException(404, "Order not found")
+    return {"ok": True, "status": data.status}
 
 @api.get("/admin/categories")
 async def admin_categories(_: dict = Depends(current_admin)): return await db.categories.find({}, {"_id": 0}).sort("position", 1).to_list(100)
@@ -162,6 +229,11 @@ async def startup():
     await db.categories.create_index("id", unique=True)
     await db.products.create_index("id", unique=True)
     await db.login_attempts.create_index("identifier", unique=True)
+    await db.orders.create_index("id", unique=True)
+    await db.orders.create_index("order_number", unique=True)
+    await db.orders.create_index([("created_at", -1)])
+    await db.order_items.create_index("order_id")
+    await db.counters.update_one({"_id": "order_number"}, {"$setOnInsert": {"seq": 1000}}, upsert=True)
     email, password = os.environ["ADMIN_EMAIL"].lower(), os.environ["ADMIN_PASSWORD"]
     user = await db.users.find_one({"email": email})
     doc = {"id": str(uuid.uuid4()), "email": email, "password_hash": hash_password(password), "role": "admin", "created_at": now()}
@@ -171,6 +243,7 @@ async def startup():
         await db.categories.insert_many([{"id": str(uuid.uuid4()), "name": name, "position": i, "created_at": now()} for i, name in enumerate(["Coffee", "Cold Coffee", "Thickshakes", "Mocktails", "Snacks", "Desserts", "Food", "Specials"])])
 
 app.include_router(api)
+app.mount("/api/uploads", StaticFiles(directory=UPLOADS), name="api_uploads")
 app.mount("/uploads", StaticFiles(directory=UPLOADS), name="uploads")
 origins = [os.environ.get("FRONTEND_URL", "https://story-cafe-admin.preview.emergentagent.com"), "https://story-cafe-admin.preview.emergentagent.com", "http://localhost:3000"]
 app.add_middleware(CORSMiddleware, allow_origins=list(set(origins)), allow_origin_regex=r"https://.*\.preview\.emergentagent\.com", allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
