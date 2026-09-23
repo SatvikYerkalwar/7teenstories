@@ -1,0 +1,42 @@
+{
+  "summary": "Re-tested account lockout, admin login/logout, credentialed CORS, public empty menu, and unauthenticated mutation. Application auth and lockout pass locally and through external ingress; external credentialed OPTIONS still returns 400 without an explicit origin.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "https://story-cafe-admin.preview.emergentagent.com/api/auth/login OPTIONS",
+        "issue": "Credentialed preflight returns HTTP 400 and omits Access-Control-Allow-Origin, while local preflight returns 200 with the explicit origin and credentials headers.",
+        "priority": "HIGH"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_story_cafe_api.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/iteration_3.json"
+  ],
+  "action_items": [
+    "Update the external preview ingress CORS/preflight policy to allow the configured preview origin explicitly with credentials; do not rewrite it to wildcard origin."
+  ],
+  "critical_code_review_comments": [
+    "The backend middleware supplies correct explicit credentialed CORS locally, but the deployed edge still rejects OPTIONS before the application response; deployment ingress configuration is part of the auth integration contract."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_3.json",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "success_rate": {
+    "backend": "100% requested application flows; external CORS preflight remains failing",
+    "frontend": "100% of executed smoke checks"
+  },
+  "seed_data_creation": "No persistent seed data created. CRUD regression used temporary TEST_ records and cleaned them; invalid-login probes used non-existent emails.",
+  "retest_needed": true,
+  "should_call_test_agent_after_fix": true,
+  "context_for_next_testing_agent": "Local and external same-email six-failure probes return 429. Valid admin login sets HttpOnly Secure SameSite=None cookie; /auth/me and logout work; bcrypt hash starts with $2b$. Public home shows empty-menu state and gallery lightbox opens/closes. Re-test external OPTIONS after ingress changes.",
+  "rca of the issue": "The application middleware handles allowed origins explicitly, but the external preview proxy responds to credentialed OPTIONS with a Starlette/edge-style 400 and no allow-origin header. This is outside the application process and prevents browser cross-origin credentialed preflight; configure the edge to pass OPTIONS and preserve explicit origin/credentials headers."
+}
