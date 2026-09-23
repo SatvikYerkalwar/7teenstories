@@ -39,6 +39,14 @@
 .cart-totals .grand span:last-child{color:var(--rust)}
 .cart-totals small{display:block;font:10px 'DM Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:10px 0 14px}
 .cart-totals .button{margin-top:4px}
+/* upload polish */
+.upload-box.uploading img{filter:blur(1px) brightness(.85)}
+.upload-box.uploading span{animation:blink 1s ease-in-out infinite}
+@keyframes blink{50%{opacity:.5}}
+.remove-image{border:0;background:none;color:var(--muted);font:10px 'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;margin-top:8px;padding:0;text-decoration:underline}
+.remove-image:hover{color:#9c3d2a}
+.sms-note{font:11px 'DM Mono',monospace;color:var(--muted);margin-top:14px;display:flex;gap:8px;align-items:center}
+.sms-note.sent{color:#4c6b42}.sms-note.failed{color:#9c3d2a}
 /* order pages */
 .order-page{min-height:100vh;display:flex;flex-direction:column}
 .static-nav{position:static;background:var(--paper);border-bottom:1px solid var(--line)}

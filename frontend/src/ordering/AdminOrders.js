@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, BellRing, Coffee, X } from "lucide-react";
+import { Bell, BellRing, Coffee, MessageSquare, X } from "lucide-react";
 import { api, fmtDate, fmtTime, imgUrl, ORDER_TYPES, post, rupee, STATUS_LABEL, STATUSES } from "./shared";
 
 function chime() {
@@ -93,5 +93,16 @@ export function OrderDetail({ order, onClose, onStatus }) {
     <div className="receipt">{order.items.map(i => <div className="receipt-line" key={i.id} data-testid={`detail-item-${i.id}`}><div className="cart-thumb">{i.product_image_snapshot ? <img src={imgUrl(i.product_image_snapshot)} alt="" /> : <Coffee size={14} />}</div><span className="receipt-name">{i.product_name_snapshot} <em>× {i.quantity}</em></span><strong>{rupee(i.subtotal)}</strong></div>)}
       <div className="receipt-total grand"><span>Total</span><span data-testid="detail-total">{rupee(order.total)}</span></div></div>
     <div className="status-steps">{STATUSES.filter(s => s !== "cancelled").map(s => <button key={s} className={`chip ${order.status === s ? "active" : ""}`} disabled={busy} onClick={() => change({ target: { value: s } })} data-testid={`status-btn-${s}`}>{STATUS_LABEL[s]}</button>)}<button className={`chip danger ${order.status === "cancelled" ? "active" : ""}`} disabled={busy} onClick={() => window.confirm("Cancel this order?") && change({ target: { value: "cancelled" } })} data-testid="status-btn-cancelled">Cancelled</button></div>
+    <SmsNote order={order} />
   </div></div>;
+}
+
+function SmsNote({ order }) {
+  const [configured, setConfigured] = useState(null);
+  useEffect(() => { api("/admin/settings").then(s => setConfigured(s.sms_configured)).catch(() => setConfigured(false)); }, []);
+  if (order.ready_sms_status === "sent") return <p className="sms-note sent" data-testid="sms-status"><MessageSquare size={13} /> "Order ready" SMS sent to {order.customer_phone} at {fmtTime(order.ready_sms_sent_at)}</p>;
+  if (order.ready_sms_status === "failed") return <p className="sms-note failed" data-testid="sms-status"><MessageSquare size={13} /> SMS could not be sent — {order.ready_sms_detail}</p>;
+  if (configured === false) return <p className="sms-note" data-testid="sms-status"><MessageSquare size={13} /> Ready-SMS is off: add Twilio credentials to enable customer texts</p>;
+  if (configured) return <p className="sms-note" data-testid="sms-status"><MessageSquare size={13} /> Customer will get an SMS when marked Ready</p>;
+  return null;
 }

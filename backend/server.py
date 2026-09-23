@@ -2,15 +2,17 @@ from dotenv import load_dotenv
 from pathlib import Path
 load_dotenv(Path(__file__).parent / '.env')
 
-import os, uuid, logging, secrets
+import os, uuid, logging, secrets, asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 import bcrypt, jwt
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Form
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Form, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
+from storage import detect_image, put_object, get_object, init_storage, APP_NAME, IMAGE_TYPES
+from sms import send_sms, sms_configured
 
 ROOT = Path(__file__).parent
 UPLOADS = ROOT / "uploads"
@@ -146,11 +148,22 @@ async def admin_order(order_id: str, _: dict = Depends(current_admin)):
     return await order_with_items(order)
 
 @api.patch("/admin/orders/{order_id}/status")
-async def update_order_status(order_id: str, data: StatusIn, _: dict = Depends(current_admin)):
+async def update_order_status(order_id: str, data: StatusIn, background: BackgroundTasks, _: dict = Depends(current_admin)):
     if data.status not in ORDER_STATUSES: raise HTTPException(400, "Unknown status")
-    result = await db.orders.update_one({"id": order_id}, {"$set": {"status": data.status, "updated_at": now()}})
-    if not result.matched_count: raise HTTPException(404, "Order not found")
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order: raise HTTPException(404, "Order not found")
+    await db.orders.update_one({"id": order_id}, {"$set": {"status": data.status, "updated_at": now()}})
+    if data.status == "ready" and order["status"] != "ready" and not order.get("ready_sms_sent_at"):
+        background.add_task(notify_ready, order)
     return {"ok": True, "status": data.status}
+
+async def notify_ready(order):
+    where = f"we're bringing it to table {order['table_number']}" if order["order_type"] == "dine_in" and order.get("table_number") else "please collect it at the counter"
+    body = f"7teen Stories Cafe: Hi {order['customer_name']}, your order {order['order_number']} is ready - {where}. Thank you for visiting!"
+    ok, detail = await send_sms(order["customer_phone"], body)
+    update = {"ready_sms_status": "sent" if ok else "failed", "ready_sms_detail": detail}
+    if ok: update["ready_sms_sent_at"] = now()
+    await db.orders.update_one({"id": order["id"]}, {"$set": update})
 
 @api.get("/admin/categories")
 async def admin_categories(_: dict = Depends(current_admin)): return await db.categories.find({}, {"_id": 0}).sort("position", 1).to_list(100)
@@ -216,12 +229,43 @@ async def delete_product(product_id: str, _: dict = Depends(current_admin)):
 
 @api.post("/admin/upload")
 async def upload_image(file: UploadFile = File(...), _: dict = Depends(current_admin)):
-    if file.content_type not in ALLOWED_IMAGES: raise HTTPException(400, "Use JPG, PNG, or WebP images")
     content = await file.read()
     if len(content) > 5 * 1024 * 1024: raise HTTPException(400, "Image must be under 5MB")
-    ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[file.content_type]
-    name = f"{uuid.uuid4()}{ext}"; (UPLOADS / name).write_bytes(content)
-    return {"image_url": f"/uploads/{name}"}
+    ext = detect_image(content)
+    if not ext: raise HTTPException(400, "That file isn't a valid image. Use JPG, PNG, or WebP")
+    name = f"{uuid.uuid4()}.{ext}"
+    try: result = await put_object(f"{APP_NAME}/products/{name}", content, IMAGE_TYPES[ext])
+    except Exception as e:
+        logging.error("Upload to storage failed: %s", e)
+        raise HTTPException(502, "Image upload failed. Please try again.")
+    await db.files.insert_one({"id": name, "storage_path": result["path"], "content_type": IMAGE_TYPES[ext], "original_filename": file.filename, "size": len(content), "is_deleted": False, "created_at": now()})
+    return {"image_url": f"/api/files/{name}"}
+
+@api.get("/files/{name}")
+async def serve_file(name: str):
+    record = await db.files.find_one({"id": name, "is_deleted": False}, {"_id": 0})
+    if not record: raise HTTPException(404, "File not found")
+    try: data, _ct = await get_object(record["storage_path"])
+    except Exception as e:
+        logging.error("Storage read failed: %s", e)
+        raise HTTPException(502, "Image temporarily unavailable")
+    return Response(content=data, media_type=record["content_type"], headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+async def migrate_local_uploads():
+    async for p in db.products.find({"image_url": {"$regex": "^/uploads/"}}, {"_id": 0, "id": 1, "image_url": 1}):
+        local = UPLOADS / p["image_url"].split("/")[-1]
+        if not local.exists(): continue
+        content = local.read_bytes(); ext = detect_image(content)
+        if not ext: continue
+        name = f"{uuid.uuid4()}.{ext}"
+        try: result = await put_object(f"{APP_NAME}/products/{name}", content, IMAGE_TYPES[ext])
+        except Exception as e: logging.error("Migration failed for %s: %s", p["id"], e); continue
+        await db.files.insert_one({"id": name, "storage_path": result["path"], "content_type": IMAGE_TYPES[ext], "original_filename": local.name, "size": len(content), "is_deleted": False, "created_at": now()})
+        await db.products.update_one({"id": p["id"]}, {"$set": {"image_url": f"/api/files/{name}"}})
+        logging.info("Migrated image for product %s", p["id"])
+
+@api.get("/admin/settings")
+async def admin_settings(_: dict = Depends(current_admin)): return {"sms_configured": sms_configured()}
 
 @app.on_event("startup")
 async def startup():
@@ -234,6 +278,10 @@ async def startup():
     await db.orders.create_index([("created_at", -1)])
     await db.order_items.create_index("order_id")
     await db.counters.update_one({"_id": "order_number"}, {"$setOnInsert": {"seq": 1000}}, upsert=True)
+    await db.files.create_index("id", unique=True)
+    try: await asyncio.to_thread(init_storage); logging.info("Object storage ready")
+    except Exception as e: logging.error("Object storage init failed: %s", e)
+    asyncio.create_task(migrate_local_uploads())
     email, password = os.environ["ADMIN_EMAIL"].lower(), os.environ["ADMIN_PASSWORD"]
     user = await db.users.find_one({"email": email})
     doc = {"id": str(uuid.uuid4()), "email": email, "password_hash": hash_password(password), "role": "admin", "created_at": now()}
