@@ -53,9 +53,20 @@ class ProductIn(BaseModel):
 async def health(): return {"ok": True}
 
 @api.post("/auth/login")
-async def login(data: Login, response: Response):
-    user = await db.users.find_one({"email": data.email.lower().strip()})
-    if not user or not verify_password(data.password, user["password_hash"]): raise HTTPException(401, "Invalid email or password")
+async def login(data: Login, response: Response, request: Request):
+    email = data.email.lower().strip()
+    identifier = f"{request.client.host if request.client else 'unknown'}:{email}"
+    attempt = await db.login_attempts.find_one({"identifier": identifier}, {"_id": 0})
+    if attempt and attempt.get("locked_until", "") > now():
+        raise HTTPException(429, "Too many failed attempts. Please try again in 15 minutes.")
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(data.password, user["password_hash"]):
+        failures = (attempt.get("failures", 0) if attempt else 0) + 1
+        update = {"identifier": identifier, "failures": failures, "updated_at": now()}
+        if failures >= 5: update["locked_until"] = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+        await db.login_attempts.update_one({"identifier": identifier}, {"$set": update}, upsert=True)
+        raise HTTPException(401, "Invalid email or password")
+    await db.login_attempts.delete_one({"identifier": identifier})
     response.set_cookie("access_token", token_for(user["id"], user["email"]), httponly=True, secure=True, samesite="none", max_age=43200, path="/")
     return {"id": user["id"], "email": user["email"], "role": user["role"]}
 
@@ -140,6 +151,7 @@ async def startup():
     await db.users.create_index("email", unique=True)
     await db.categories.create_index("id", unique=True)
     await db.products.create_index("id", unique=True)
+    await db.login_attempts.create_index("identifier", unique=True)
     email, password = os.environ["ADMIN_EMAIL"].lower(), os.environ["ADMIN_PASSWORD"]
     user = await db.users.find_one({"email": email})
     doc = {"id": str(uuid.uuid4()), "email": email, "password_hash": hash_password(password), "role": "admin", "created_at": now()}
@@ -150,7 +162,20 @@ async def startup():
 
 app.include_router(api)
 app.mount("/uploads", StaticFiles(directory=UPLOADS), name="uploads")
-origins = [os.environ.get("FRONTEND_URL", "https://story-cafe-admin.preview.emergentagent.com"), "http://localhost:3000"]
-app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+origins = [os.environ.get("FRONTEND_URL", "https://story-cafe-admin.preview.emergentagent.com"), "https://story-cafe-admin.preview.emergentagent.com", "http://localhost:3000"]
+app.add_middleware(CORSMiddleware, allow_origins=list(set(origins)), allow_origin_regex=r"https://.*\.preview\.emergentagent\.com", allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+@app.middleware("http")
+async def credentialed_preflight(request: Request, call_next):
+    origin = request.headers.get("origin", "")
+    if request.method == "OPTIONS" and (origin in origins or origin.endswith(".preview.emergentagent.com")):
+        return Response(status_code=200, headers={"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true", "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS", "Access-Control-Allow-Headers": request.headers.get("access-control-request-headers", "Content-Type, Authorization"), "Vary": "Origin"})
+    response = await call_next(request)
+    if origin in origins or origin.endswith(".preview.emergentagent.com"):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Vary"] = "Origin"
+    return response
+
 @app.on_event("shutdown")
 async def shutdown(): client.close()

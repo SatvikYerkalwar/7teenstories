@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="3.457" timestamp="2026-09-23T13:26:14.919653+00:00" hostname="agent-env-a06bea47-dc93-4642-900e-25d21123cf73"><testcase classname="tests.test_story_cafe_api" name="test_login_cookie_and_bruteforce_lockout" time="2.824"><failure message="assert 401 in (423, 429)&#10; +  where 401 = &lt;Response [401]&gt;.status_code">backend/tests/test_story_cafe_api.py:59: in test_login_cookie_and_bruteforce_lockout
+    assert locked.status_code in (423, 429)
+E   assert 401 in (423, 429)
+E    +  where 401 = &lt;Response [401]&gt;.status_code</failure></testcase></testsuite></testsuites>

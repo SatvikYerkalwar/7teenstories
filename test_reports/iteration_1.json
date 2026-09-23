@@ -1,0 +1,49 @@
+{
+  "summary": "Completed backend API regression and browser E2E coverage for public site, owner auth, menu/category CRUD, availability, uploads, gallery, logout, and mobile navigation. Core CRUD and UI flows pass; auth hardening has two findings.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/auth/login",
+        "issue": "No brute-force lockout after five consecutive failed logins; the sixth failed attempt still returns 401 instead of 423/429.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "CORS preflight /api/auth/login",
+        "issue": "OPTIONS with Origin https://story-cafe-admin.preview.emergentagent.com returns 400 Disallowed CORS origin and no allow-origin header, despite FRONTEND_URL being configured; same-origin browser flow is unaffected."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_story_cafe_api.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/auth_results.xml"
+  ],
+  "action_items": [
+    "Implement and persist per-account/IP login throttling or lockout after five failed attempts, with a clear 423/429 response.",
+    "Fix runtime CORS origin loading so the configured frontend origin passes credentialed preflight requests."
+  ],
+  "critical_code_review_comments": [
+    "server.py login has no failed-attempt tracking, rate limit, or lockout path.",
+    "CORS origins rely on FRONTEND_URL at import time; verify supervisor runtime environment/.env loading because the public configured origin is rejected by preflight."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_story_cafe_api.py",
+    "/app/test_reports/iteration_1.json"
+  ],
+  "success_rate": {
+    "backend": "80% (4/5; lockout test failed)",
+    "frontend": "100% of corrected E2E checks"
+  },
+  "seed_data_creation": "Created temporary TEST_Category/TEST_Product records through API and UI, then deleted them; public products are empty and only the eight seeded categories remain.",
+  "retest_needed": true,
+  "should_call_test_agent_after_fix": true,
+  "context_for_next_testing_agent": "Public home/logo/gallery/empty menu, login/session cookie, unauthenticated mutation rejection, category constraint, product create/edit/toggle/delete, public menu sync, upload, logout, desktop and mobile navigation were exercised. Re-run auth lockout and CORS preflight after fixes.",
+  "rca of the issue": "Brute-force failure is directly caused by /api/auth/login only querying the user and verifying bcrypt; it has no attempt counter or lockout state. CORS failure is reproducible with an OPTIONS request carrying the configured public Origin; Starlette returns Disallowed CORS origin, indicating the runtime allowed-origin list does not contain that value even though backend/.env declares FRONTEND_URL."
+}
