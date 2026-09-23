@@ -1,0 +1,47 @@
+{
+  "summary": "Re-ran backend regression and browser smoke tests. Local lockout and credentialed preflight now pass, but the public external ingress still returns 401 on the sixth invalid login and 400 on credentialed OPTIONS preflight. Admin credentials, cookie, public empty menu, CRUD, lightbox, login, dashboard, and logout flows otherwise pass.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "https://story-cafe-admin.preview.emergentagent.com/api/auth/login",
+        "issue": "Seven consecutive invalid requests using the same email through the external ingress all return 401; sixth attempt does not return 429/423. The local API correctly returns 429 on attempt six.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "https://story-cafe-admin.preview.emergentagent.com/api/auth/login OPTIONS",
+        "issue": "Credentialed preflight returns HTTP 400 without Access-Control-Allow-Origin. Local preflight returns 200 with the expected explicit origin and credentials headers. External successful login responses are also edge-rewritten to Access-Control-Allow-Origin: * with credentials, which is invalid for browser credentialed CORS.",
+        "priority": "HIGH"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_story_cafe_api.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/iteration_2.json"
+  ],
+  "action_items": [
+    "Fix the external ingress CORS policy so the configured preview origin is allowed explicitly with credentials and edge headers do not overwrite the application response.",
+    "Make login throttling effective behind the external load balancer by keying failed attempts on the account/email (and a stable client identity if available), not only request.client.host; then re-run the external sixth-attempt test."
+  ],
+  "critical_code_review_comments": [
+    "The lockout identifier combines email with request.client.host. External requests arrive through rotating internal ingress addresses, so an attacker can bypass the five-failure limit by changing ingress path; account-level throttling is required.",
+    "The application middleware is correct locally, but the public edge injects Access-Control-Allow-Origin: * and rejects OPTIONS. Treat the external proxy CORS configuration as part of the deployed API contract."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "80% (4/5 regression tests; external lockout failed; local targeted lockout and preflight passed)",
+    "frontend": "100% of executed smoke checks"
+  },
+  "seed_data_creation": "Regression CRUD created temporary TEST category/product records and removed them; public products remain empty. A small invalid-login probe created only failed-attempt records for random nonexistent emails.",
+  "retest_needed": true,
+  "should_call_test_agent_after_fix": true,
+  "context_for_next_testing_agent": "Local http://localhost:8001/api: sixth same-email invalid login returns 429 and credentialed OPTIONS returns 200. External preview: same-email invalid attempts remain 401 and OPTIONS is 400. Valid external admin login succeeds with HttpOnly Secure SameSite=None cookie. Browser public/admin smoke and existing CRUD suite passed except external lockout regression.",
+  "rca of the issue": "The backend lockout implementation works when all requests share one source address, but external ingress distributes requests across different internal client hosts; because identifier includes request.client.host, failures do not accumulate externally. External CORS failure is at the preview edge: response headers show edge Access-Control-Allow-Origin: * and Starlette-style 400 preflight behavior, while direct local middleware returns the intended explicit origin response."
+}

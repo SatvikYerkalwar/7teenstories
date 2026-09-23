@@ -55,7 +55,8 @@ async def health(): return {"ok": True}
 @api.post("/auth/login")
 async def login(data: Login, response: Response, request: Request):
     email = data.email.lower().strip()
-    identifier = f"{request.client.host if request.client else 'unknown'}:{email}"
+    # Track by normalized account email so rotating proxy/ingress IPs cannot bypass lockout.
+    identifier = email
     attempt = await db.login_attempts.find_one({"identifier": identifier}, {"_id": 0})
     if attempt and attempt.get("locked_until", "") > now():
         raise HTTPException(429, "Too many failed attempts. Please try again in 15 minutes.")
