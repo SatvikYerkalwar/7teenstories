@@ -44,6 +44,7 @@ async def current_admin(request: Request):
 
 class Login(BaseModel): email: str; password: str
 class CategoryIn(BaseModel): name: str = Field(min_length=1, max_length=60)
+class ReorderIn(BaseModel): ids: list[str]
 class ProductIn(BaseModel):
     name: str = Field(min_length=1, max_length=100); description: str = ""
     category_id: str; price: float = Field(gt=0); image_url: str = ""
@@ -93,11 +94,19 @@ async def add_category(data: CategoryIn, _: dict = Depends(current_admin)):
     doc = {"id": str(uuid.uuid4()), "name": data.name.strip(), "position": await db.categories.count_documents({}), "created_at": now()}
     await db.categories.insert_one(doc); return clean(doc)
 
+@api.post("/admin/categories/reorder")
+async def reorder_categories(data: ReorderIn, _: dict = Depends(current_admin)):
+    for position, cid in enumerate(data.ids):
+        await db.categories.update_one({"id": cid}, {"$set": {"position": position}})
+    return {"ok": True}
+
 @api.put("/admin/categories/{category_id}")
 async def rename_category(category_id: str, data: CategoryIn, _: dict = Depends(current_admin)):
-    result = await db.categories.update_one({"id": category_id}, {"$set": {"name": data.name.strip()}})
+    name = data.name.strip()
+    if await db.categories.find_one({"id": {"$ne": category_id}, "name": {"$regex": f"^{name}$", "$options": "i"}}): raise HTTPException(409, "Another category already uses that name")
+    result = await db.categories.update_one({"id": category_id}, {"$set": {"name": name}})
     if not result.matched_count: raise HTTPException(404, "Category not found")
-    await db.products.update_many({"category_id": category_id}, {"$set": {"category_name": data.name.strip()}})
+    await db.products.update_many({"category_id": category_id}, {"$set": {"category_name": name}})
     return {"ok": True}
 
 @api.delete("/admin/categories/{category_id}")
