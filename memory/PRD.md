@@ -44,6 +44,14 @@ A storybook-inspired premium café website with a secure owner admin panel to ma
 - `GET/POST/PUT/DELETE /api/admin/products(/{id})`, `PATCH /api/admin/products/{id}/availability`
 - `POST /api/admin/upload`
 
+## Implemented (2026-06) — Image storage fix + Ready SMS
+- Root cause of broken product images: uploads stored at `/uploads/*` on local disk; ingress only proxies `/api/*`, so `<img>` received HTML. WebP rejected on loose MIME.
+- Fix: `POST /api/admin/upload` validates by magic bytes (PNG/JPG/WebP ≤5MB), stores in **Emergent Object Storage** (`7teen-cafe/products/<uuid>.<ext>`), records in `files` collection, returns `/api/files/<name>`; `GET /api/files/{name}` streams with correct MIME. Legacy `/uploads/` images auto-migrated on startup. Modules: `backend/storage.py`, `backend/sms.py`.
+- Admin ProductModal: instant local preview, "Uploading…" state, Save disabled while uploading, "Replace image"/"Remove image", clear error messages.
+- Ready SMS: marking an order **Ready** fires a Twilio SMS in a background task (`notify_ready`); result stored on order (`ready_sms_status`, `ready_sms_detail`, `ready_sms_sent_at`) and shown in the order detail modal. `GET /api/admin/settings` → `{sms_configured}`. Env: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` (currently EMPTY → SMS gracefully skipped).
+
+- Product/featured card images + admin upload preview locked to a fixed **4:3** ratio (`aspect-ratio:4/3; object-fit:cover; object-position:center; overflow:hidden`), cards flex so "Add to Cart" aligns across a row. Original files untouched.
+
 ## Backlog
 - **P1** — Online payment (schema ready: `payment_method`/`payment_status` on orders).
 - **P1** — Admin "Accepting orders" on/off switch (Settings tab).
