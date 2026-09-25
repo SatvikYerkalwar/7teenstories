@@ -1,11 +1,11 @@
 {
   "services": {
     "frontend": {
-      "root": "frontend",
+      "root": "frontend/",
       "framework": "create-react-app"
     },
     "backend": {
-      "root": "backend",
+      "root": "backend/",
       "entrypoint": "server:app"
     }
   },
@@ -13,14 +13,12 @@
     {
       "source": "/api/(.*)",
       "destination": {
-        "type": "service",
         "service": "backend"
       }
     },
     {
       "source": "/(.*)",
       "destination": {
-        "type": "service",
         "service": "frontend"
       }
     }
